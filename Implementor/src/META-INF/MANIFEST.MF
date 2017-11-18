@@ -1,0 +1,4 @@
+Manifest-Version: 1.0
+Class-Path: WalkTest.jar junit-4.11.jar hamcrest-core-1.3.jar ImplementorTest.jar ArraySetTest.jar quickcheck-0.6.jar
+Main-Class: ru.ifmo.ctddev.dyadyushkin.implementor.ClassJarImplementor
+

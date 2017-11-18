@@ -3,16 +3,34 @@ package ru.ifmo.ctddev.dyadyushkin.crawler;
 import info.kgeorgiy.java.advanced.crawler.*;
 
 import java.io.IOException;
+import java.net.MalformedURLException;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
 public class WebCrawler implements Crawler {
-    private Downloader downloader;
-    private ExecutorService downloadExecutor;
+    private final Downloader downloader;
+    private final ExecutorService downloadExecutor;
     private final Semaphore maxDownloads;
     private final Semaphore maxExtractors;
+    private final ConcurrentHashMap<String, Semaphore> hosts = new ConcurrentHashMap<>();
+    private final int perHost;
+
+    public WebCrawler(Downloader downloader, int downloaders, int extractors, int perHost) {
+        int threads;
+        try {
+            threads = Math.addExact(downloaders, extractors);
+        }
+        catch (ArithmeticException e) {
+            threads = Integer.MAX_VALUE;
+        }
+        this.downloader       = downloader;
+        this.downloadExecutor = Executors.newFixedThreadPool(threads);
+        this.maxDownloads     = new Semaphore(downloaders);
+        this.maxExtractors    = new Semaphore(extractors);
+        this.perHost          = perHost;
+    }
 
     protected class Cache {
         protected ConcurrentHashMap<String, String> urls = new ConcurrentHashMap<>();
@@ -41,23 +59,40 @@ public class WebCrawler implements Crawler {
             return result;
         }
 
+        private Semaphore retreive(String url, Semaphore semaphore) {
+            return semaphore == null
+                ? new Semaphore(WebCrawler.this.perHost)
+                : semaphore;
+        }
         @Override
         public List<String> apply(String s) {
             Document document = null;
             List<String> result = null;
+            String host = null;
 
+            try {
+                host = URLUtils.getHost(s);
+            }
+            catch (MalformedURLException e) {
+                e.printStackTrace();
+                return result;
+            }
+
+            Semaphore semaphore = WebCrawler.this.hosts.compute(host, this::retreive);
+            semaphore.acquireUninterruptibly();
             WebCrawler.this.maxDownloads.acquireUninterruptibly();
             try {
                 document = WebCrawler.this.downloader.download(s);
-
             }
             catch (IOException e) {
                 cache.errors.putIfAbsent(s, e);
             }
             finally {
                 WebCrawler.this.maxDownloads.release();
-                if (document == null)
+                semaphore.release();
+                if (document == null) {
                     return result;
+                }
             }
 
             WebCrawler.this.maxExtractors.acquireUninterruptibly();
@@ -74,12 +109,6 @@ public class WebCrawler implements Crawler {
         }
     }
 
-    public WebCrawler(Downloader downloader, int downloaders, int extractors, int perHost) {
-        this.downloader       = downloader;
-        this.downloadExecutor = Executors.newFixedThreadPool(downloaders);
-        this.maxDownloads     = new Semaphore(downloaders);
-        this.maxExtractors    = new Semaphore(extractors);
-    }
 
     protected static <T> T extractFuture(Future<T> future) {
         try {
@@ -131,8 +160,8 @@ public class WebCrawler implements Crawler {
 
     public static void test(String url, int deep) throws Exception {
         ReplayDownloader downloader = new ReplayDownloader(url, deep, 10, 10);
-        CheckingDownloader checkingDownloader = new CheckingDownloader(downloader, Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE);
-        WebCrawler crawler = new WebCrawler(checkingDownloader, Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE);
+        CheckingDownloader checkingDownloader = new CheckingDownloader(downloader, Integer.MAX_VALUE, Integer.MAX_VALUE, 1);
+        WebCrawler crawler = new WebCrawler(checkingDownloader, Integer.MAX_VALUE, Integer.MAX_VALUE, 1);
         Result r = crawler.download(url, deep);
         Result expected = downloader.expected(deep);
 
@@ -156,7 +185,7 @@ public class WebCrawler implements Crawler {
     public static void main(String... args) throws Exception {
         int b = Integer.MAX_VALUE, c = Integer.MAX_VALUE;
         int a = b + c;
-        System.out.println(a);
+        test("http://www.ifmo.ru", 2);
 //        Queue<Integer> list = new LinkedList<>(Arrays.asList(1));
 //        while (!list.isEmpty()) {
 //            Integer i = list.remove();

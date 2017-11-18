@@ -11,18 +11,19 @@ import java.util.stream.Collectors;
 public class WebCrawler implements Crawler {
     private Downloader downloader;
     private ExecutorService downloadExecutor;
-    private ExecutorService extractExecutor;
+    private final Semaphore maxDownloads;
+    private final Semaphore maxExtractors;
 
     protected class Cache {
-        protected ConcurrentHashMap<String, Document> documentsCache = new ConcurrentHashMap<>();
-        protected ConcurrentHashMap<Document, List<String>> urlsCache = new ConcurrentHashMap<>();
         protected ConcurrentHashMap<String, String> urls = new ConcurrentHashMap<>();
         protected ConcurrentHashMap<String, IOException> errors = new ConcurrentHashMap<>();
 
         public Cache() {}
     }
 
-    protected class DownloadTask implements Callable<Future<List<String>>>, Function<String, Document> {
+    protected class DownloadTask implements
+            Callable<List<String>>,
+            Function<String, List<String>> {
         private String url;
         private Cache cache;
 
@@ -32,62 +33,52 @@ public class WebCrawler implements Crawler {
         }
 
         @Override
-        public Future<List<String>> call() {
+        public List<String> call() {
             // 'cause ConcurrentHashMap cannot store null
-                if (cache.urls.putIfAbsent(url, url) != null)
-                    return null;
-                Document document = cache.documentsCache.computeIfAbsent(this.url, this);
-                return document == null
-                    ? null
-                    : extractExecutor.submit(new ExtractorTask(document, url, cache));
+            if (cache.urls.putIfAbsent(url, url) != null)
+                return null;
+            List<String> result = this.apply(url);// = cache.documentsCache.computeIfAbsent(this.url, this);
+            return result;
         }
 
         @Override
-        public Document apply(String s) {
+        public List<String> apply(String s) {
+            Document document = null;
+            List<String> result = null;
+
+            WebCrawler.this.maxDownloads.acquireUninterruptibly();
             try {
-                return WebCrawler.this.downloader.download(s);
+                document = WebCrawler.this.downloader.download(s);
+
             }
             catch (IOException e) {
                 cache.errors.putIfAbsent(s, e);
             }
-            return null;
-        }
-    }
-
-    protected class ExtractorTask implements Callable<List<String>>, Function<Document, List<String>> {
-        private Document document;
-        private String url;
-        private Cache cache;
-
-        protected ExtractorTask(Document document, String url, Cache cache) {
-            this.document = document;
-            this.url = url;
-            this.cache = cache;
-        }
-
-        @Override
-        public List<String> call() {
-            if (cache.errors.containsKey(url))
-                return null;
-
-            return cache.urlsCache.computeIfAbsent(document, this);
-        }
-
-        @Override
-        public List<String> apply(Document document) {
-            try {
-                return document.extractLinks();
-            } catch (IOException e) {
-                cache.errors.putIfAbsent(url, e);
+            finally {
+                WebCrawler.this.maxDownloads.release();
+                if (document == null)
+                    return result;
             }
-            return null;
+
+            WebCrawler.this.maxExtractors.acquireUninterruptibly();
+            try {
+                result = document.extractLinks();
+            }
+            catch (IOException e) {
+                cache.errors.putIfAbsent(s, e);
+            }
+            finally {
+                WebCrawler.this.maxExtractors.release();
+            }
+            return result;
         }
     }
 
     public WebCrawler(Downloader downloader, int downloaders, int extractors, int perHost) {
-        this.downloader = downloader;
+        this.downloader       = downloader;
         this.downloadExecutor = Executors.newFixedThreadPool(downloaders);
-        this.extractExecutor  = Executors.newFixedThreadPool(extractors);
+        this.maxDownloads     = new Semaphore(downloaders);
+        this.maxExtractors    = new Semaphore(extractors);
     }
 
     protected static <T> T extractFuture(Future<T> future) {
@@ -107,15 +98,13 @@ public class WebCrawler implements Crawler {
         Cache cache = new Cache();
         for (int depth = 0; depth < i; depth++) {
             allUrls.addAll(currentUrls);
-            List<Callable<Future<List<String>>>> downloads = currentUrls.stream()
+            List<Callable<List<String>>> downloads = currentUrls.stream()
                     .map(v -> new DownloadTask(v, cache) )
                     .collect(Collectors.toCollection(LinkedList::new));
             if (downloads.size() == 0)
                 break;
             try {
                 currentUrls = downloadExecutor.invokeAll(downloads).stream()
-                        .filter(Objects::nonNull)
-                        .map(WebCrawler::extractFuture)
                         .filter(Objects::nonNull)
                         .map(WebCrawler::extractFuture)
                         .filter(Objects::nonNull)
@@ -134,12 +123,6 @@ public class WebCrawler implements Crawler {
     public void close() {
         try {
             downloadExecutor.shutdownNow();
-        }
-        catch (Exception e) {
-            e.printStackTrace();
-        }
-        try {
-            extractExecutor.shutdownNow();
         }
         catch (Exception e) {
             e.printStackTrace();
@@ -171,11 +154,14 @@ public class WebCrawler implements Crawler {
     }
 
     public static void main(String... args) throws Exception {
-        Queue<Integer> list = new LinkedList<>(Arrays.asList(1));
-        while (!list.isEmpty()) {
-            Integer i = list.remove();
-            list.add(i + 1);
-            System.out.println(i);
-        }
+        int b = Integer.MAX_VALUE, c = Integer.MAX_VALUE;
+        int a = b + c;
+        System.out.println(a);
+//        Queue<Integer> list = new LinkedList<>(Arrays.asList(1));
+//        while (!list.isEmpty()) {
+//            Integer i = list.remove();
+//            list.add(i + 1);
+//            System.out.println(i);
+//        }
     }
 }

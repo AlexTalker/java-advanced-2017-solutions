@@ -10,7 +10,7 @@ import java.util.function.Function;
 
 public class ParallelMapperImpl implements ParallelMapper {
     // TODO: Inherit IterativeParalelism & use this class
-    private ExecutorService executorService;
+    private final ExecutorService executorService;
 
     public ParallelMapperImpl(int threads) {
         executorService = Executors.newFixedThreadPool(threads);
@@ -22,9 +22,7 @@ public class ParallelMapperImpl implements ParallelMapper {
         synchronized (executorService) {
             // Submit tasks in ordered to the map() calls
             for (T arg: list) {
-                RunnableFuture<R> future = new FutureTask<>(() -> function.apply(arg));
-                futures.add(future);
-                executorService.submit(future);
+                futures.add(executorService.submit(() -> function.apply(arg)));
             }
         }
         boolean done = false;

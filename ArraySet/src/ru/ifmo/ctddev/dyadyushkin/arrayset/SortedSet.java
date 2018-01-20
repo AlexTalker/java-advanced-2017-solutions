@@ -29,6 +29,7 @@ public class SortedSet<E> implements java.util.SortedSet<E> {
     }
 
 
+    @SuppressWarnings("unchecked")
     public SortedSet(){
         elements = (E[]) new Object[0];
     }
@@ -36,6 +37,7 @@ public class SortedSet<E> implements java.util.SortedSet<E> {
         this(c, null);
     }
 
+    @SuppressWarnings("unchecked")
     public SortedSet(Collection<E> c, Comparator<E> cmp) {
         this();
         comparator = cmp;
@@ -124,6 +126,7 @@ public class SortedSet<E> implements java.util.SortedSet<E> {
         return size() == 0;
     }
 
+    @SuppressWarnings("unchecked")
     @Override
     public boolean contains(Object o) {
         E e = (E) o;
@@ -144,6 +147,7 @@ public class SortedSet<E> implements java.util.SortedSet<E> {
         return Arrays.copyOfRange(elements, fromPosition, toPosition);
     }
 
+    @SuppressWarnings("unchecked")
     @Override
     public <T> T[] toArray(T[] a) {
         return (T[]) toArray();
@@ -165,6 +169,7 @@ public class SortedSet<E> implements java.util.SortedSet<E> {
         return Arrays.binarySearch(elements, e, comparator);
     }
 
+    @SuppressWarnings("unchecked")
     protected int compare(E a, E b) {
         Comparator<? super E> c = comparator();
         if (c != null) {
